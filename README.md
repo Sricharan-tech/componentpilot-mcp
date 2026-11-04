@@ -87,3 +87,20 @@ npm run build
 ```
 
 `npm run health` is an optional live Fetch check and requires `TINYFISH_API_KEY`. `health_check` reports server health separately from source reachability and cached-data freshness. It performs one bounded Fetch probe at startup and then at most once per five-minute probe interval (`COMPONENTPILOT_HEALTH_PROBE_INTERVAL_MS`); concurrent health calls share that probe and never queue a TinyFish Agent run. A failed probe retains, and clearly timestamps, the last successful source data. Do not bypass an access block; update parser code and tests if the Gallery layout changes.
+
+
+## Example Prompts
+
+You don't need to know component names or MCP tool names.
+
+- "I'm building a dashboard and want users to switch between
+  Profile, Settings, and Activity without leaving the page.
+  What component should I use?"
+
+- "Compare Ariakit, Headless UI, and Chakra UI tabs for a
+  React project. Which would you recommend?"
+
+- "Use ComponentPilot to try the live Ariakit Tabs demo.
+  Click between sections and tell me what actually changes."
+
+For more examples, see [EXAMPLE_PROMPTS.md](./EXAMPLE_PROMPTS.md).
