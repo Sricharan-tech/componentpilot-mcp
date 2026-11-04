@@ -109,7 +109,14 @@ export function implementationCardsFromHtml(html: string, pageUrl: string, compo
 }
 
 export class ComponentPilotService {
-  constructor(private readonly reader: PageReader, private readonly demoAgent?: DemoAgent) {}
+  private readonly healthBySource = new Map<string, { last_probe_at: string; latest_successful_refresh_at: string; page: FetchedPage; components_discovered: number; last_error?: { code: string; message: string; at: string } }>();
+  private readonly healthProbeIntervalMs: number;
+  private readonly now: () => Date;
+  constructor(private readonly reader: PageReader, private readonly demoAgent?: DemoAgent, options: { healthProbeIntervalMs?: number; now?: () => Date } = {}) {
+    this.healthProbeIntervalMs = options.healthProbeIntervalMs ?? Number(process.env.COMPONENTPILOT_HEALTH_PROBE_INTERVAL_MS ?? 300_000);
+    if (!Number.isFinite(this.healthProbeIntervalMs) || this.healthProbeIntervalMs < 0) throw new ComponentPilotError("INVALID_SOURCE_CONFIG", "COMPONENTPILOT_HEALTH_PROBE_INTERVAL_MS must be a non-negative number.");
+    this.now = options.now ?? (() => new Date());
+  }
   /** Validates every fetched page before any parser can treat it as evidence. */
   private async fetchVerified(expectedUrl: string, source: SourceConfig, format: "markdown" | "html" = "markdown"): Promise<FetchedPage> {
     const page = await this.reader.fetch(expectedUrl, format);
@@ -258,5 +265,46 @@ export class ComponentPilotService {
     const found = await this.implementationRecords(component, sourceId); const wanted = new Set(names.map((name) => name.toLowerCase())); const selected = found.filter((item) => !wanted.size || wanted.has(item.name.toLowerCase())).slice(0, maxResults);
     if (wanted.size && selected.length !== wanted.size) throw new ComponentPilotError("IMPLEMENTATION_NOT_FOUND", "One or more requested implementations were not linked by the currently retrieved component page."); return { status: selected.length ? "ok" : "no_results", component, comparison_basis: "Source-linked implementation names and URLs only; ComponentPilot does not crawl third-party sites for this comparison.", implementations: selected, source: selected[0]?.source ?? null };
   }
-  async healthCheck(sourceId?: string) { const { source, page } = await this.catalogue(sourceId); const discovered = page.links.filter((url) => componentPath(url, source)).length || markdownLinks(page.text).filter((item) => componentPath(item.url, source)).length; if (!discovered) throw new ComponentPilotError("SOURCE_LAYOUT_CHANGED", "No component links matched the configured source shape.", true); return { status: "ok", source_id: source.id, source_url: page.url, source: citation(page), components_discovered: discovered, checked_at: new Date().toISOString(), detail: "Catalogue links were dynamically discovered with TinyFish Fetch." }; }
+  async healthCheck(sourceId?: string) {
+    const source = findSource(sourceId); const checkedAt = this.now().toISOString(); const prior = this.healthBySource.get(source.id);
+    const probeDue = !prior || Date.parse(checkedAt) - Date.parse(prior.last_probe_at) >= this.healthProbeIntervalMs;
+    let page: FetchedPage | undefined = prior?.page;
+    let discovered = prior?.components_discovered;
+    let refreshAttempted = false;
+    try {
+      if (probeDue) {
+        refreshAttempted = true;
+        page = this.reader.refresh ? await this.reader.refresh(source.catalogue_url) : await this.reader.fetch(source.catalogue_url);
+        this.assertCatalogueShape(source, page);
+        discovered = page.links.filter((url) => componentPath(url, source)).length || markdownLinks(page.text).filter((item) => componentPath(item.url, source)).length;
+        if (!discovered) throw new ComponentPilotError("SOURCE_LAYOUT_CHANGED", "No component links matched the configured source shape.", true);
+        this.healthBySource.set(source.id, { last_probe_at: checkedAt, latest_successful_refresh_at: checkedAt, page, components_discovered: discovered });
+      }
+      if (!page || !discovered) throw new ComponentPilotError("SOURCE_UNAVAILABLE", "No successful source refresh is available for this server process.", true);
+      const ageMs = Math.max(0, Date.parse(checkedAt) - Date.parse(page.retrieved_at));
+      const fresh = ageMs <= Number(process.env.COMPONENTPILOT_MAX_SOURCE_AGE_MS ?? 300_000);
+      const state = this.healthBySource.get(source.id)!;
+      return {
+        status: fresh ? "ok" : "degraded", checked_at: checkedAt,
+        server: { status: "ok" },
+        source: {
+          id: source.id, url: page.url,
+          reachability: { status: refreshAttempted ? "reachable" : "recently_reachable", checked_at: state.last_probe_at },
+          cached_data: { status: fresh ? "fresh" : "stale", retrieved_at: page.retrieved_at, age_ms: ageMs },
+          latest_successful_refresh_at: state.latest_successful_refresh_at,
+        },
+        components_discovered: discovered,
+        detail: refreshAttempted ? "A bounded TinyFish Fetch probe refreshed the catalogue." : "Using the most recent successful bounded source probe; no additional Fetch was needed.",
+      };
+    } catch (error) {
+      const known = error instanceof ComponentPilotError ? error : new ComponentPilotError("SOURCE_PROBE_FAILED", "TinyFish Fetch could not reach the configured source.", true);
+      const retained = this.healthBySource.get(source.id) ?? prior;
+      if (retained) {
+        retained.last_error = { code: known.code, message: known.message, at: checkedAt };
+        const ageMs = Math.max(0, Date.parse(checkedAt) - Date.parse(retained.page.retrieved_at));
+        return { status: "degraded", checked_at: checkedAt, server: { status: "ok" }, source: { id: source.id, url: retained.page.url, reachability: { status: "unreachable", checked_at: checkedAt }, cached_data: { status: ageMs <= Number(process.env.COMPONENTPILOT_MAX_SOURCE_AGE_MS ?? 300_000) ? "fresh" : "stale", retrieved_at: retained.page.retrieved_at, age_ms: ageMs }, latest_successful_refresh_at: retained.latest_successful_refresh_at, last_error: retained.last_error }, components_discovered: retained.components_discovered, detail: "The source probe failed; prior successful data was retained and is identified above." };
+      }
+      return { status: "error", checked_at: checkedAt, server: { status: "ok" }, source: { id: source.id, url: source.catalogue_url, reachability: { status: "unreachable", checked_at: checkedAt }, cached_data: { status: "unavailable", retrieved_at: null, age_ms: null }, latest_successful_refresh_at: null, last_error: { code: known.code, message: known.message, at: checkedAt } }, components_discovered: 0, detail: "No successful source refresh is available; the MCP server itself remains running." };
+    }
+  }
 }

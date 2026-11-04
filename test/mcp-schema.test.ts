@@ -88,3 +88,25 @@ describe("inspect_component_demo MCP schema", () => {
     } finally { await client.close(); }
   });
 });
+
+describe("health_check MCP smoke", () => {
+  it("advertises bounded probing and returns the structured health result", async () => {
+    const { client, request } = await connectedServer();
+    try {
+      const listed = await request(10, "tools/list", {});
+      const tool = (listed.result as { tools: Array<{ name: string; description: string }> }).tools.find(({ name }) => name === "health_check");
+      expect(tool?.description).toContain("never queues a paid Agent run");
+      // This server has no healthCheck method, so prove the real MCP wiring in a
+      // dedicated in-memory server rather than depending on the examples stub.
+      const server = createServer({ healthCheck: async () => ({ status: "ok", server: { status: "ok" }, source: { reachability: { status: "reachable" } } }) } as never);
+      const [healthClient, transport] = InMemoryTransport.createLinkedPair(); const messages: Message[] = [];
+      healthClient.onmessage = (message) => messages.push(message as Message); await server.server.connect(transport); await healthClient.start();
+      await healthClient.send({ jsonrpc: "2.0", id: 11, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } } });
+      await healthClient.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await healthClient.send({ jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "health_check", arguments: {} } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(messages.find((message) => message.id === 12)?.result).toMatchObject({ structuredContent: { status: "ok", source: { reachability: { status: "reachable" } } } });
+      await healthClient.close();
+    } finally { await client.close(); }
+  });
+});

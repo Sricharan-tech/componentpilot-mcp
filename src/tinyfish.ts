@@ -3,14 +3,33 @@ import { BoundedCache, ComponentPilotError, assertFreshTimestamp, assertHttps } 
 
 export type FetchFormat = "markdown" | "html";
 export type FetchedPage = { url: string; text: string; links: string[]; title: string | null; description: string | null; retrieved_at: string; format?: FetchFormat };
-export interface PageReader { fetch(url: string, format?: FetchFormat): Promise<FetchedPage>; fetchScopedHtml?(url: string, selector: string): Promise<FetchedPage>; }
+export interface PageReader {
+  fetch(url: string, format?: FetchFormat): Promise<FetchedPage>;
+  /** Bypasses ComponentPilot's process cache; intended only for bounded health probes. */
+  refresh?(url: string, format?: FetchFormat): Promise<FetchedPage>;
+  fetchScopedHtml?(url: string, selector: string): Promise<FetchedPage>;
+}
 
 /** Fetch is the normal low-cost retrieval path. Agent extraction is deliberately not used by tools. */
 export class TinyFishFetchReader implements PageReader {
   private readonly client: TinyFish;
+  private readonly refreshes = new Map<string, Promise<FetchedPage>>();
   constructor(private readonly cache = new BoundedCache(), client?: TinyFish) { if (!process.env.TINYFISH_API_KEY && !client) throw new ComponentPilotError("MISSING_TINYFISH_API_KEY", "Set TINYFISH_API_KEY before starting ComponentPilot."); this.client = client ?? new TinyFish(); }
   async fetch(url: string, format: FetchFormat = "markdown"): Promise<FetchedPage> {
     assertHttps(url, "source URL"); const cacheKey = `${format}:${url}`; const cached = this.cache.get<FetchedPage>(cacheKey); if (cached) return cached;
+    return this.refresh(url, format);
+  }
+  async refresh(url: string, format: FetchFormat = "markdown"): Promise<FetchedPage> {
+    assertHttps(url, "source URL");
+    const cacheKey = `${format}:${url}`;
+    // A burst of health checks must share one low-cost Fetch request rather than
+    // silently multiplying upstream usage.
+    const active = this.refreshes.get(cacheKey); if (active) return active;
+    const work = this.fetchRemote(url, format, cacheKey).finally(() => this.refreshes.delete(cacheKey));
+    this.refreshes.set(cacheKey, work);
+    return work;
+  }
+  private async fetchRemote(url: string, format: FetchFormat, cacheKey: string): Promise<FetchedPage> {
     try {
       const response = await this.client.fetch.getContents({ urls: [url], format, links: true, ttl: 0, per_url_timeout_ms: 45_000, purpose: "Retrieve a public component-reference page for a cited, bounded MCP response. Do not bypass access controls." });
       const item = response.results[0] as FetchResult | undefined;

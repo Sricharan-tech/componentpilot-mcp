@@ -86,4 +86,4 @@ npm test
 npm run build
 ```
 
-`npm run health` is an optional live Fetch check and requires `TINYFISH_API_KEY`. Do not bypass an access block; update parser code and tests if the Gallery layout changes.
+`npm run health` is an optional live Fetch check and requires `TINYFISH_API_KEY`. `health_check` reports server health separately from source reachability and cached-data freshness. It performs one bounded Fetch probe at startup and then at most once per five-minute probe interval (`COMPONENTPILOT_HEALTH_PROBE_INTERVAL_MS`); concurrent health calls share that probe and never queue a TinyFish Agent run. A failed probe retains, and clearly timestamps, the last successful source data. Do not bypass an access block; update parser code and tests if the Gallery layout changes.
