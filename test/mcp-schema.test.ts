@@ -61,7 +61,7 @@ describe("get_component_examples MCP schema", () => {
 });
 
 describe("inspect_component_demo MCP schema", () => {
-  it("advertises the optional Agent tool and rejects an arbitrary incomplete selector", async () => {
+  it("advertises both selectors, explicit auto-selection, and the existing-run lookup contract", async () => {
     const { client, request } = await connectedServer();
     try {
       const listed = await request(6, "tools/list", {});
@@ -69,10 +69,10 @@ describe("inspect_component_demo MCP schema", () => {
         .find(({ name }) => name === "inspect_component_demo");
       expect(tool?.inputSchema.properties).toHaveProperty("implementation_name");
       expect(tool?.inputSchema.properties).toHaveProperty("implementation_url");
+      expect(tool?.inputSchema.properties.selection_mode).toMatchObject({ type: "string", enum: ["explicit", "auto"], default: "explicit" });
       expect(tool?.inputSchema.properties.component).toMatchObject({ type: "string", minLength: 2 });
       expect(tool?.inputSchema.properties.requested_checks).toMatchObject({ type: "array", minItems: 1, maxItems: 4 });
-      const invalid = await request(7, "tools/call", { name: "inspect_component_demo", arguments: { component: "Tabs", requested_checks: ["tab_click"] } });
-      expect(invalid.result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("implementation_name") }] });
+      expect(tool).toMatchObject({ description: expect.stringContaining("get_component_demo_run") });
     } finally {
       await client.close();
     }

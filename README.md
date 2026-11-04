@@ -25,7 +25,7 @@ Research tools: `find_components`, `get_component_examples`, `find_design_system
 
 Agent tools: `inspect_component_demo` validates a source-linked target and queues a TinyFish inspection, returning a `run_id` immediately. `get_component_demo_run` retrieves that same run without queuing, retrying, or billing a second run. Run context is held only in memory, so query it from the same ComponentPilot process.
 
-The Agent accepts one source-linked implementation selector, never an arbitrary browsing target. Its checks are limited, reversible, and return structured errors or uncertainty rather than invented observations. For Tabs, Tab-key focus alone is not treated as arrow-key, activation, tab-panel, or accessibility evidence.
+The Agent accepts a source-linked implementation name, URL, or both when they identify the same source record; it never accepts an arbitrary browsing target. Without a selector it returns a structured list of available names. Set `selection_mode` to `"auto"` only when the user explicitly asks ComponentPilot to select the first source-backed implementation. Its checks are limited, reversible, and return structured errors or uncertainty rather than invented observations. For Tabs, Tab-key focus alone is not treated as arrow-key, activation, tab-panel, or accessibility evidence.
 
 ## Evidence and pagination
 

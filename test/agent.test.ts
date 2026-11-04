@@ -15,10 +15,45 @@ const found = { demo_status: "found" as const, tested_url: "https://www.radix-ui
 const queued = { run_id: "run_fixture", status: "PENDING" as const, queued_at: "2026-11-04T00:00:00.000Z" };
 
 describe("optional demo inspection", () => {
-  it("returns a queued run ID from a source-linked implementation without waiting for execution", async () => {
+  it("accepts an implementation name and returns a queued run ID without waiting for execution", async () => {
     const agent: DemoAgent = { start: async () => queued };
     const result = await new ComponentPilotService(new Reader(), agent).inspectComponentDemo("Tabs", "Radix UI", undefined, ["tab_click", "keyboard_navigation"]);
     expect(result).toMatchObject({ status: "queued", run_id: "run_fixture", source_url: "https://www.radix-ui.com/primitives/docs/components/tabs", next_tool: "get_component_demo_run" });
+  });
+  it("accepts a source-linked implementation URL", async () => {
+    const agent: DemoAgent = { start: async () => queued };
+    await expect(new ComponentPilotService(new Reader(), agent).inspectComponentDemo("Tabs", undefined, "https://www.radix-ui.com/primitives/docs/components/tabs", ["tab_click"])).resolves.toMatchObject({ implementation: { name: "Radix UI" } });
+  });
+  it("accepts matching implementation name and URL", async () => {
+    const agent: DemoAgent = { start: async () => queued };
+    await expect(new ComponentPilotService(new Reader(), agent).inspectComponentDemo("Tabs", "Radix UI", "https://www.radix-ui.com/primitives/docs/components/tabs", ["tab_click"])).resolves.toMatchObject({ implementation: { name: "Radix UI" } });
+  });
+  it("rejects conflicting implementation name and URL without starting an Agent run", async () => {
+    const twoCards = `<ul id="component-examples-list"><li><p>Radix UI</p><a href="https://www.radix-ui.com/primitives/docs/components/tabs">Docs</a></li><li><p>Reach UI</p><a href="https://reach.tech/tabs">Docs</a></li></ul>`;
+    const reader: PageReader = { async fetch(url, format) { return { url, text: format === "html" ? twoCards : url.includes("/tabs/") ? "# Tabs" : catalogue, links: url.includes("/tabs/") ? [] : ["https://component.gallery/components/tabs/"], title: null, description: null, retrieved_at: now(), format }; } };
+    let starts = 0;
+    const agent: DemoAgent = { start: async () => { starts++; return queued; } };
+    await expect(new ComponentPilotService(reader, agent).inspectComponentDemo("Tabs", "Radix UI", "https://reach.tech/tabs", ["tab_click"])).rejects.toMatchObject({ code: "IMPLEMENTATION_MISMATCH", details: { name_match: { name: "Radix UI" }, url_match: { name: "Reach UI" } } });
+    expect(starts).toBe(0);
+  });
+  it("lists source-backed implementation names when no selector was provided", async () => {
+    const agent: DemoAgent = { start: async () => { throw new Error("must not run"); } };
+    await expect(new ComponentPilotService(new Reader(), agent).inspectComponentDemo("Tabs", undefined, undefined, ["tab_click"])).rejects.toMatchObject({ code: "IMPLEMENTATION_SELECTION_REQUIRED", details: { available_implementation_names: ["Radix UI"] } });
+  });
+  it("auto-selects only when selection_mode is explicitly requested", async () => {
+    const agent: DemoAgent = { start: async () => queued };
+    await expect(new ComponentPilotService(new Reader(), agent).inspectComponentDemo("Tabs", undefined, undefined, ["tab_click"], undefined, "auto")).resolves.toMatchObject({ implementation: { name: "Radix UI" } });
+  });
+  it("retrieves an existing run without queuing another paid Agent run", async () => {
+    let starts = 0; let polls = 0;
+    const agent: DemoAgent = {
+      start: async () => { starts++; return queued; },
+      getRun: async (run_id) => { polls++; return { run_id, status: "RUNNING", inspection: null }; },
+    };
+    const service = new ComponentPilotService(new Reader(), agent);
+    const started = await service.inspectComponentDemo("Tabs", "Radix UI", undefined, ["tab_click"]);
+    await expect(service.componentDemoRun(started.run_id)).resolves.toMatchObject({ status: "RUNNING", inspection: null });
+    expect({ starts, polls }).toEqual({ starts: 1, polls: 1 });
   });
   it("refuses an arbitrary implementation URL before an Agent can browse it", async () => {
     const agent: DemoAgent = { start: async () => { throw new Error("must not run"); } };

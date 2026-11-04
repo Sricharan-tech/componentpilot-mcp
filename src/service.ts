@@ -167,20 +167,33 @@ export class ComponentPilotService {
     return [...new Map(examples.map((item) => [`${item.name}|${item.url}`, item])).values()];
   }
   /** Resolve an Agent target from the current source-linked card set; never accept a user-supplied browsing URL. */
-  private async resolveImplementation(component: string, name: string | undefined, url: string | undefined, sourceId?: string) {
-    if ((name ? 1 : 0) + (url ? 1 : 0) !== 1) throw new ComponentPilotError("INVALID_IMPLEMENTATION_SELECTOR", "Provide exactly one of implementation_name or implementation_url.");
+  private async resolveImplementation(component: string, name: string | undefined, url: string | undefined, selectionMode: "explicit" | "auto", sourceId?: string) {
     const records = await this.implementationRecords(component, sourceId);
-    const record = name
-      ? records.find((item) => item.name.toLowerCase() === name.toLowerCase())
-      : records.find((item) => item.url === url || item.links.some((link) => link.url === url));
+    const byName = name ? records.find((item) => item.name.toLowerCase() === name.toLowerCase()) : undefined;
+    const byUrl = url ? records.find((item) => item.url === url || item.links.some((link) => link.url === url)) : undefined;
+    if (name && url && byName !== byUrl) {
+      throw new ComponentPilotError("IMPLEMENTATION_MISMATCH", "implementation_name and implementation_url must identify the same source-linked implementation.", false, {
+        implementation_name: name,
+        implementation_url: url,
+        name_match: byName ? { name: byName.name, url: byName.url } : null,
+        url_match: byUrl ? { name: byUrl.name, url: byUrl.url } : null,
+      });
+    }
+    if (!name && !url && selectionMode !== "auto") {
+      throw new ComponentPilotError("IMPLEMENTATION_SELECTION_REQUIRED", "Choose implementation_name or implementation_url from the source-backed implementations, or explicitly set selection_mode to auto.", false, {
+        available_implementation_names: [...new Set(records.map((item) => item.name))],
+        selection_mode: "explicit",
+      });
+    }
+    const record = byName ?? byUrl ?? (!name && !url ? records[0] : undefined);
     if (!record) throw new ComponentPilotError("IMPLEMENTATION_NOT_FOUND", "The requested implementation was not linked by the currently retrieved component page.");
     const target = url ?? record.url;
     assertHttps(target, "source-linked implementation URL");
     return { record, target };
   }
-  async inspectComponentDemo(component: string, implementationName: string | undefined, implementationUrl: string | undefined, checks: DemoCheck[], sourceId?: string) {
+  async inspectComponentDemo(component: string, implementationName: string | undefined, implementationUrl: string | undefined, checks: DemoCheck[], sourceId?: string, selectionMode: "explicit" | "auto" = "explicit") {
     if (!this.demoAgent) throw new ComponentPilotError("AGENT_UNAVAILABLE", "The optional TinyFish Agent integration is not configured for this server.");
-    const { record, target } = await this.resolveImplementation(component, implementationName, implementationUrl, sourceId);
+    const { record, target } = await this.resolveImplementation(component, implementationName, implementationUrl, selectionMode, sourceId);
     const started = await this.demoAgent.start(target, component, checks);
     return ComponentDemoStartedSchema.parse({ status: "queued", run_id: started.run_id, queued_at: started.queued_at, component, implementation: { name: record.name, url: target }, source_url: target, next_tool: "get_component_demo_run" });
   }
