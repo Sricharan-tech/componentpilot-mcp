@@ -1,0 +1,29 @@
+{
+  "name": "componentpilot-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live, cited component-reference discovery from public design-system catalogues.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "health": "tsx src/health-cli.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.0",
+    "@tiny-fish/sdk": "^0.8.0",
+    "cheerio": "^1.2.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
